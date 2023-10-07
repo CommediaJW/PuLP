@@ -50,6 +50,7 @@
 #include <stdint.h>
 #include <assert.h>
 #include <math.h>
+#include <vector>
 
 #include "pulp_init.h"
 #include "util.h"
@@ -60,90 +61,101 @@
 extern int procid, nprocs;
 extern int seed;
 extern bool verbose, debug, verify;
+extern int64_t batch_size;
+extern int64_t train_wid;
 
 void pulp_init_rand(
-  dist_graph_t* g, mpi_data_t* comm, queue_data_t* q, pulp_data_t* pulp) 
+    dist_graph_t *g, mpi_data_t *comm, queue_data_t *q, pulp_data_t *pulp)
 {
-  if (debug) { printf("Task %d pulp_rand_init() start\n", procid); }
+  if (debug)
+  {
+    printf("Task %d pulp_rand_init() start\n", procid);
+  }
 
   q->send_size = 0;
   for (int32_t i = 0; i < nprocs; ++i)
     comm->sendcounts_temp[i] = 0;
 
-#pragma omp parallel 
-{
-  thread_queue_t tq;
-  thread_comm_t tc;
-  init_thread_queue(&tq);
-  init_thread_comm(&tc);
+#pragma omp parallel
+  {
+    thread_queue_t tq;
+    thread_comm_t tc;
+    init_thread_queue(&tq);
+    init_thread_comm(&tc);
 
-  xs1024star_t xs;
-  xs1024star_seed((uint64_t)seed + omp_get_thread_num(), &xs);
-
-#pragma omp for
-  for (uint64_t i = 0; i < g->n_local; ++i)
-    pulp->local_parts[i] = xs1024star_next(&xs) % pulp->num_parts;
+    xs1024star_t xs;
+    xs1024star_seed((uint64_t)seed + omp_get_thread_num(), &xs);
 
 #pragma omp for
-  for (uint64_t i = g->n_local; i < g->n_total; ++i)
-    pulp->local_parts[i] = -1;
+    for (uint64_t i = 0; i < g->n_local; ++i)
+      pulp->local_parts[i] = xs1024star_next(&xs) % pulp->num_parts;
+
+#pragma omp for
+    for (uint64_t i = g->n_local; i < g->n_total; ++i)
+      pulp->local_parts[i] = -1;
 
 #pragma omp for schedule(guided) nowait
-  for (uint64_t i = 0; i < g->n_local; ++i)
-    update_sendcounts_thread(g, &tc, i);
+    for (uint64_t i = 0; i < g->n_local; ++i)
+      update_sendcounts_thread(g, &tc, i);
 
-  for (int32_t i = 0; i < nprocs; ++i)
-  {
+    for (int32_t i = 0; i < nprocs; ++i)
+    {
 #pragma omp atomic
-    comm->sendcounts_temp[i] += tc.sendcounts_thread[i];
+      comm->sendcounts_temp[i] += tc.sendcounts_thread[i];
 
-    tc.sendcounts_thread[i] = 0;
-  }
+      tc.sendcounts_thread[i] = 0;
+    }
 
 #pragma omp barrier
 
 #pragma omp single
-{
-  init_sendbuf_vid_data(comm);    
-}
+    {
+      init_sendbuf_vid_data(comm);
+    }
 
 #pragma omp for schedule(guided) nowait
-  for (uint64_t i = 0; i < g->n_local; ++i)
-    update_vid_data_queues(g, &tc, comm, i, pulp->local_parts[i]);
+    for (uint64_t i = 0; i < g->n_local; ++i)
+      update_vid_data_queues(g, &tc, comm, i, pulp->local_parts[i]);
 
-  empty_vid_data(&tc, comm);
+    empty_vid_data(&tc, comm);
 #pragma omp barrier
 
 #pragma omp single
-{
-  exchange_vert_data(g, comm, q);
-} // end single
+    {
+      exchange_vert_data(g, comm, q);
+    } // end single
 
 #pragma omp for
-  for (uint64_t i = 0; i < comm->total_recv; ++i)
-  {
-    uint64_t index = get_value(g->map, comm->recvbuf_vert[i]);
-    pulp->local_parts[index] = comm->recvbuf_data[i];
-  }
+    for (uint64_t i = 0; i < comm->total_recv; ++i)
+    {
+      uint64_t index = get_value(g->map, comm->recvbuf_vert[i]);
+      pulp->local_parts[index] = comm->recvbuf_data[i];
+    }
 
 #pragma omp single
-{
-  clear_recvbuf_vid_data(comm);
-}
+    {
+      clear_recvbuf_vid_data(comm);
+    }
 
-  clear_thread_queue(&tq);
-  clear_thread_comm(&tc);
-} // end parallel
+    clear_thread_queue(&tq);
+    clear_thread_comm(&tc);
+  } // end parallel
 
-  //part_eval(g, pulp);
+  // part_eval(g, pulp);
 
-  if (debug) { printf("Task %d pulp_rand_init() success\n", procid); }
+  if (debug)
+  {
+    printf("Task %d pulp_rand_init() success\n", procid);
+  }
 }
 
 void pulp_init_block(
-  dist_graph_t* g, mpi_data_t* comm, queue_data_t* q, pulp_data_t* pulp) 
+    dist_graph_t *g, mpi_data_t *comm, queue_data_t *q, pulp_data_t *pulp)
 {
-  if (debug) { printf("Task %d pulp_block_init() start\n", procid); }
+  if (debug)
+  {
+    printf("Task %d pulp_block_init() start\n", procid);
+  }
 
   q->send_size = 0;
   for (int32_t i = 0; i < nprocs; ++i)
@@ -151,105 +163,108 @@ void pulp_init_block(
 
   uint64_t num_per_part = g->n / (uint64_t)pulp->num_parts + 1;
 
-#pragma omp parallel 
-{
-  thread_queue_t tq;
-  thread_comm_t tc;
-  init_thread_queue(&tq);
-  init_thread_comm(&tc);
+#pragma omp parallel
+  {
+    thread_queue_t tq;
+    thread_comm_t tc;
+    init_thread_queue(&tq);
+    init_thread_comm(&tc);
 
 #pragma omp for nowait
-  for (uint64_t i = 0; i < g->n_local; ++i)
-  {
-    uint64_t gid = g->local_unmap[i];
-    int32_t part_assignment = (int32_t)(gid / num_per_part);
-    pulp->local_parts[i] = part_assignment;
-    assert(part_assignment < pulp->num_parts);
-  }
+    for (uint64_t i = 0; i < g->n_local; ++i)
+    {
+      uint64_t gid = g->local_unmap[i];
+      int32_t part_assignment = (int32_t)(gid / num_per_part);
+      pulp->local_parts[i] = part_assignment;
+      assert(part_assignment < pulp->num_parts);
+    }
 
 #pragma omp for
-  for (uint64_t i = g->n_local; i < g->n_total; ++i)
-    pulp->local_parts[i] = -1;
-
-#pragma omp for schedule(guided)  nowait 
-  for (uint64_t i = 0; i < g->n_local; ++i)
-    update_sendcounts_thread(g, &tc, i);
-
-  for (int32_t i = 0; i < nprocs; ++i)
-  {
-#pragma omp atomic
-    comm->sendcounts_temp[i] += tc.sendcounts_thread[i];
-
-    tc.sendcounts_thread[i] = 0;
-  }
-
-#pragma omp barrier
-
-#pragma omp single
-{
-  init_sendbuf_vid_data(comm);    
-}
+    for (uint64_t i = g->n_local; i < g->n_total; ++i)
+      pulp->local_parts[i] = -1;
 
 #pragma omp for schedule(guided) nowait
-  for (uint64_t i = 0; i < g->n_local; ++i)
-    update_vid_data_queues(g, &tc, comm, i, pulp->local_parts[i]);
+    for (uint64_t i = 0; i < g->n_local; ++i)
+      update_sendcounts_thread(g, &tc, i);
 
-  empty_vid_data(&tc, comm);
+    for (int32_t i = 0; i < nprocs; ++i)
+    {
+#pragma omp atomic
+      comm->sendcounts_temp[i] += tc.sendcounts_thread[i];
+
+      tc.sendcounts_thread[i] = 0;
+    }
+
 #pragma omp barrier
 
 #pragma omp single
-{
-  exchange_vert_data(g, comm, q);
-} // end single
+    {
+      init_sendbuf_vid_data(comm);
+    }
 
-#pragma omp for
-  for (uint64_t i = 0; i < comm->total_recv; ++i)
-  {
-    uint64_t index = get_value(g->map, comm->recvbuf_vert[i]);
-    pulp->local_parts[index] = comm->recvbuf_data[i];
-  }
+#pragma omp for schedule(guided) nowait
+    for (uint64_t i = 0; i < g->n_local; ++i)
+      update_vid_data_queues(g, &tc, comm, i, pulp->local_parts[i]);
+
+    empty_vid_data(&tc, comm);
+#pragma omp barrier
 
 #pragma omp single
-{
-  clear_recvbuf_vid_data(comm);
+    {
+      exchange_vert_data(g, comm, q);
+    } // end single
+
+#pragma omp for
+    for (uint64_t i = 0; i < comm->total_recv; ++i)
+    {
+      uint64_t index = get_value(g->map, comm->recvbuf_vert[i]);
+      pulp->local_parts[index] = comm->recvbuf_data[i];
+    }
+
+#pragma omp single
+    {
+      clear_recvbuf_vid_data(comm);
+    }
+
+    clear_thread_queue(&tq);
+    clear_thread_comm(&tc);
+
+  } // end parallel
+
+  if (debug)
+  {
+    printf("Task %d pulp_block_init() success\n", procid);
+  }
 }
-
-  clear_thread_queue(&tq);
-  clear_thread_comm(&tc);
-
-} // end parallel
-
-  if (debug) { printf("Task %d pulp_block_init() success\n", procid); }
-}
-
 
 void pulp_init_bfs_pull(
-  dist_graph_t* g, mpi_data_t* comm, queue_data_t* q, pulp_data_t* pulp)
+    dist_graph_t *g, mpi_data_t *comm, queue_data_t *q, pulp_data_t *pulp)
 {
 
 #pragma omp parallel
-{
+  {
 #pragma omp for
-  for (uint64_t i = 0; i < g->n_total; ++i)
-    pulp->local_parts[i] = -1;
-}
+    for (uint64_t i = 0; i < g->n_total; ++i)
+      pulp->local_parts[i] = -1;
+  }
 
-  uint64_t* roots = (uint64_t*)malloc(pulp->num_parts*sizeof(uint64_t));
+  uint64_t *roots = (uint64_t *)malloc(pulp->num_parts * sizeof(uint64_t));
   if (procid == 0)
-  {    
+  {
     xs1024star_t xs;
     xs1024star_seed((uint64_t)seed, &xs);
-    
+
     for (int32_t i = 0; i < pulp->num_parts; ++i)
       roots[i] = xs1024star_next(&xs) % g->n;
 
-    quicksort_inc(roots, 0, (int64_t)pulp->num_parts-1);   
+    quicksort_inc(roots, 0, (int64_t)pulp->num_parts - 1);
 
     for (int32_t i = 1; i < pulp->num_parts; ++i)
-      if (roots[i] <= roots[i-1])
-        roots[i] = roots[i-1] + 1;
+      if (roots[i] <= roots[i - 1])
+        roots[i] = roots[i - 1] + 1;
 
-    if (debug) {
+    if (debug)
+    {
       printf("BFS Init Roots ");
       for (int32_t i = 0; i < pulp->num_parts; ++i)
         printf("%lu ", roots[i]);
@@ -266,13 +281,13 @@ void pulp_init_bfs_pull(
 
     if (root_index != NULL_KEY)
     {
-      if (debug) printf("Task %d initialize root %lu index %lu as %d\n", procid, root, root_index, i);
+      if (debug)
+        printf("Task %d initialize root %lu index %lu as %d\n", procid, root, root_index, i);
 
       pulp->local_parts[root_index] = i;
     }
   }
   free(roots);
-
 
   q->send_size = 0;
   for (int32_t i = 0; i < nprocs; ++i)
@@ -282,39 +297,118 @@ void pulp_init_bfs_pull(
   uint64_t temp_send_size = 0;
   uint64_t not_initialized = 0;
 #pragma omp parallel default(shared)
-{
-  thread_queue_t tq;
-  thread_comm_t tc;
-  init_thread_queue(&tq);
-  init_thread_comm(&tc);
-
-  while (comm->global_queue_size)
   {
-#pragma omp for schedule(guided) nowait
-    for (uint64_t vert_index = 0; vert_index < g->n_local; ++vert_index)
-    {
-      if (pulp->local_parts[vert_index] >= 0)
-        continue;
+    thread_queue_t tq;
+    thread_comm_t tc;
+    init_thread_queue(&tq);
+    init_thread_comm(&tc);
 
-      uint64_t out_degree = out_degree(g, vert_index);
-      uint64_t* outs = out_vertices(g, vert_index);
-      for (uint64_t j = 0; j < out_degree; ++j)
+    while (comm->global_queue_size)
+    {
+#pragma omp for schedule(guided) nowait
+      for (uint64_t vert_index = 0; vert_index < g->n_local; ++vert_index)
       {
-        uint64_t out_index = outs[j];
-        int32_t part_out = pulp->local_parts[out_index];
-        if (part_out >= 0)
+        if (pulp->local_parts[vert_index] >= 0)
+          continue;
+
+        uint64_t out_degree = out_degree(g, vert_index);
+        uint64_t *outs = out_vertices(g, vert_index);
+        for (uint64_t j = 0; j < out_degree; ++j)
         {
-          pulp->local_parts[vert_index] = part_out;
-          break;
+          uint64_t out_index = outs[j];
+          int32_t part_out = pulp->local_parts[out_index];
+          if (part_out >= 0)
+          {
+            pulp->local_parts[vert_index] = part_out;
+            break;
+          }
+        }
+
+        if (pulp->local_parts[vert_index] >= 0)
+        {
+          add_vid_to_send(&tq, q, vert_index);
+          add_vid_to_queue(&tq, q, vert_index);
         }
       }
 
-      if (pulp->local_parts[vert_index] >= 0)
+      empty_send(&tq, q);
+      empty_queue(&tq, q);
+#pragma omp barrier
+
+      for (int32_t i = 0; i < nprocs; ++i)
+        tc.sendcounts_thread[i] = 0;
+
+#pragma omp for schedule(guided) nowait
+      for (uint64_t i = 0; i < q->send_size; ++i)
       {
-        add_vid_to_send(&tq, q, vert_index);
-        add_vid_to_queue(&tq, q, vert_index);
+        uint64_t vert_index = q->queue_send[i];
+        update_sendcounts_thread(g, &tc, vert_index);
       }
-    }  
+
+      for (int32_t i = 0; i < nprocs; ++i)
+      {
+#pragma omp atomic
+        comm->sendcounts_temp[i] += tc.sendcounts_thread[i];
+
+        tc.sendcounts_thread[i] = 0;
+      }
+#pragma omp barrier
+
+#pragma omp single
+      {
+        init_sendbuf_vid_data(comm);
+      }
+
+#pragma omp for schedule(guided) nowait
+      for (uint64_t i = 0; i < q->send_size; ++i)
+      {
+        uint64_t vert_index = q->queue_send[i];
+        update_vid_data_queues(g, &tc, comm,
+                               vert_index, pulp->local_parts[vert_index]);
+      }
+
+      empty_vid_data(&tc, comm);
+#pragma omp barrier
+
+#pragma omp single
+      {
+        temp_send_size = q->send_size;
+        exchange_vert_data(g, comm, q);
+      } // end single
+
+#pragma omp for
+      for (uint64_t i = 0; i < comm->total_recv; ++i)
+      {
+        uint64_t index = get_value(g->map, comm->recvbuf_vert[i]);
+        pulp->local_parts[index] = comm->recvbuf_data[i];
+      }
+
+#pragma omp single
+      {
+        clear_recvbuf_vid_data(comm);
+
+        if (debug)
+          printf("Task %d send_size %lu global_size %li\n",
+                 procid, temp_send_size, comm->global_queue_size);
+      }
+
+    } // end while
+
+    xs1024star_t xs;
+    xs1024star_seed((uint64_t)seed + omp_get_thread_num(), &xs);
+
+#pragma omp for reduction(+ : not_initialized)
+    for (uint64_t i = 0; i < g->n_local; ++i)
+    {
+      if (pulp->local_parts[i] < 0)
+      {
+        pulp->local_parts[i] =
+            (int32_t)(xs1024star_next(&xs) % (uint64_t)pulp->num_parts);
+        add_vid_to_send(&tq, q, i);
+        add_vid_to_queue(&tq, q, i);
+        ++not_initialized;
+      }
+    }
 
     empty_send(&tq, q);
     empty_queue(&tq, q);
@@ -340,9 +434,9 @@ void pulp_init_bfs_pull(
 #pragma omp barrier
 
 #pragma omp single
-{
-    init_sendbuf_vid_data(comm);
-}
+    {
+      init_sendbuf_vid_data(comm);
+    }
 
 #pragma omp for schedule(guided) nowait
     for (uint64_t i = 0; i < q->send_size; ++i)
@@ -356,11 +450,9 @@ void pulp_init_bfs_pull(
 #pragma omp barrier
 
 #pragma omp single
-{
-    temp_send_size = q->send_size;
-    exchange_vert_data(g, comm, q);
-} // end single
-
+    {
+      exchange_vert_data(g, comm, q);
+    } // end single
 
 #pragma omp for
     for (uint64_t i = 0; i < comm->total_recv; ++i)
@@ -370,162 +462,72 @@ void pulp_init_bfs_pull(
     }
 
 #pragma omp single
-{   
-    clear_recvbuf_vid_data(comm);
-
-    if (debug) printf("Task %d send_size %lu global_size %li\n", 
-      procid, temp_send_size, comm->global_queue_size);
-}
-
-  } // end while
-
-  xs1024star_t xs;
-  xs1024star_seed((uint64_t)seed + omp_get_thread_num(), &xs);
-
-#pragma omp for reduction(+:not_initialized)
-  for (uint64_t i = 0; i < g->n_local; ++i)
-  {
-    if (pulp->local_parts[i] < 0)
     {
-      pulp->local_parts[i] = 
-        (int32_t)(xs1024star_next(&xs) % (uint64_t)pulp->num_parts);
-      add_vid_to_send(&tq, q, i);
-      add_vid_to_queue(&tq, q, i);
-      ++not_initialized;
+      clear_recvbuf_vid_data(comm);
     }
-  }
 
-  empty_send(&tq, q);
-  empty_queue(&tq, q);
-#pragma omp barrier
+    clear_thread_queue(&tq);
+    clear_thread_comm(&tc);
+  } // end parallel
 
-  for (int32_t i = 0; i < nprocs; ++i)
-      tc.sendcounts_thread[i] = 0;
+  if (debug)
+    printf("Task %d pulp_init_bfs() success, not initialized %lu\n", procid, not_initialized);
 
-#pragma omp for schedule(guided) nowait
-  for (uint64_t i = 0; i < q->send_size; ++i)
-  {
-    uint64_t vert_index = q->queue_send[i];
-    update_sendcounts_thread(g, &tc, vert_index);
-  }
-
-  for (int32_t i = 0; i < nprocs; ++i)
-  {
-#pragma omp atomic
-    comm->sendcounts_temp[i] += tc.sendcounts_thread[i];
-
-    tc.sendcounts_thread[i] = 0;
-  }
-#pragma omp barrier
-
-#pragma omp single
-{
-  init_sendbuf_vid_data(comm);    
+  // part_eval(g, pulp);
 }
-
-#pragma omp for schedule(guided) nowait
-  for (uint64_t i = 0; i < q->send_size; ++i)
-  {
-    uint64_t vert_index = q->queue_send[i];
-    update_vid_data_queues(g, &tc, comm,
-                           vert_index, pulp->local_parts[vert_index]);
-  }
-
-  empty_vid_data(&tc, comm);
-#pragma omp barrier
-
-#pragma omp single
-{
-  exchange_vert_data(g, comm, q);
-} // end single
-
-#pragma omp for
-  for (uint64_t i = 0; i < comm->total_recv; ++i)
-  {
-    uint64_t index = get_value(g->map, comm->recvbuf_vert[i]);
-    pulp->local_parts[index] = comm->recvbuf_data[i];
-  }
-
-#pragma omp single
-{
-  clear_recvbuf_vid_data(comm);
-}
-
-  clear_thread_queue(&tq);
-  clear_thread_comm(&tc);
-} // end parallel 
-
-  if (debug) printf("Task %d pulp_init_bfs() success, not initialized %lu\n", procid, not_initialized);
-
-  //part_eval(g, pulp);
-
-}
-
 
 #define MAX_IMBALANCE 1
 
 void pulp_init_bfs_max(
-  dist_graph_t* g, mpi_data_t* comm, queue_data_t* q, pulp_data_t* pulp)
+    dist_graph_t *g, mpi_data_t *comm, queue_data_t *q, pulp_data_t *pulp)
 {
-  //int64_t max_part_size = int64_t( (double)(g->n / pulp->num_parts) * sqrt((double)pulp->num_parts) );
-  int64_t max_part_size = int64_t( (double)(g->n / pulp->num_parts) * MAX_IMBALANCE );
-  int64_t* counts = NULL;
-  int64_t* changes = NULL;
-  if (g->num_vert_weights > 0) {
+  int64_t *counts = NULL;
+  int64_t *changes = NULL;
+  if (g->num_vert_weights > 0)
+  {
     counts = pulp->part_sizes[0];
     changes = pulp->part_size_changes[0];
-  } else {
+  }
+  else
+  {
     counts = pulp->part_vert_sizes;
     changes = pulp->part_vert_size_changes;
   }
 
-
-#pragma omp parallel
-{
-#pragma omp for
-  for (uint64_t i = 0; i < g->n_total; ++i)
-    pulp->local_parts[i] = -1;
-}
-
-  uint64_t* roots = (uint64_t*)malloc(pulp->num_parts*sizeof(uint64_t));
-  if (procid == 0)
-  {    
-    xs1024star_t xs;
-    xs1024star_seed((uint64_t)seed, &xs);
-    
-    for (int32_t i = 0; i < pulp->num_parts; ++i)
-      roots[i] = (uint64_t)(xs1024star_next(&xs) % g->n);
-
-    quicksort_inc(roots, 0, (int64_t)pulp->num_parts-1);   
-
-    for (int32_t i = 1; i < pulp->num_parts; ++i)
-      if (roots[i] <= roots[i-1])
-        roots[i] = roots[i-1] + 1;
-
-    if (debug) {
-      printf("BFS Init Roots ");
-      for (int32_t i = 0; i < pulp->num_parts; ++i)
-        printf("%lu ", roots[i]);
-      printf("\n");
-    }
-  }
-
-  MPI_Bcast(roots, pulp->num_parts, MPI_UINT64_T, 0, MPI_COMM_WORLD);
+  xs1024star_t xs;
+  xs1024star_seed((uint64_t)seed, &xs);
 
   for (int32_t i = 0; i < pulp->num_parts; ++i)
   {
-    counts[i] = 1;
-    uint64_t root = roots[i];
-    uint64_t root_index = get_value(g->map, root);
+    counts[i] = 0;
+  }
 
-    if (root_index != NULL_KEY)
+#pragma omp parallel
+  {
+#pragma omp for
+    for (uint64_t i = 0; i < g->n_local; ++i)
     {
-      if (debug) printf("Task %d initialize root %lu index %lu as %d\n", procid, root, root_index, i);
-
-      pulp->local_parts[root_index] = i;
+      if (g->vert_weights[i * g->num_vert_weights + train_wid] > 0)
+      {
+        int32_t part = (int32_t)(xs1024star_next(&xs) % (uint64_t)pulp->num_parts);
+        pulp->local_parts[i] = part;
+#pragma omp atomic
+        counts[part] += 1;
+      }
+      else
+      {
+        pulp->local_parts[i] = -1;
+      }
     }
   }
-  free(roots);
+  if (debug)
+  {
+    for (int32_t i = 0; i < pulp->num_parts; ++i)
+    {
+
+      printf("Task %d initialize: part %d has %ld verts\n", procid, i, counts[i]);
+    }
+  }
 
   q->send_size = 0;
   for (int32_t i = 0; i < nprocs; ++i)
@@ -535,45 +537,131 @@ void pulp_init_bfs_max(
   uint64_t temp_send_size = 0;
   uint64_t not_initialized = 0;
 #pragma omp parallel default(shared)
-{
-  thread_queue_t tq;
-  thread_comm_t tc;
-  init_thread_queue(&tq);
-  init_thread_comm(&tc);
-
-  while (comm->global_queue_size)
   {
-#pragma omp for schedule(guided) nowait
-    for (uint64_t vert_index = 0; vert_index < g->n_local; ++vert_index)
-    {
-      if (pulp->local_parts[vert_index] >= 0)
-        continue;
+    thread_queue_t tq;
+    thread_comm_t tc;
+    init_thread_queue(&tq);
+    init_thread_comm(&tc);
 
-      int32_t new_part = -1;
-      uint64_t out_degree = out_degree(g, vert_index);
-      uint64_t* outs = out_vertices(g, vert_index);
-      for (uint64_t j = 0; j < out_degree; ++j)
+    while (comm->global_queue_size)
+    {
+#pragma omp for schedule(guided) nowait
+      for (uint64_t vert_index = 0; vert_index < g->n_local; ++vert_index)
       {
-        uint64_t out_index = outs[j];
-        int32_t part_out = pulp->local_parts[out_index];
-        if (part_out >= 0 && 
-            counts[part_out] + changes[part_out] < max_part_size)
+        if (pulp->local_parts[vert_index] >= 0)
+          continue;
+
+        int32_t new_part = -1;
+        uint64_t out_degree = out_degree(g, vert_index);
+        uint64_t *outs = out_vertices(g, vert_index);
+        for (uint64_t j = 0; j < out_degree; ++j)
         {
-          pulp->local_parts[vert_index] = part_out;
-          new_part = part_out;
-          break;
+          uint64_t out_index = outs[j];
+          int32_t part_out = pulp->local_parts[out_index];
+          if (part_out >= 0)
+          {
+            pulp->local_parts[vert_index] = part_out;
+            new_part = part_out;
+            break;
+          }
+        }
+
+        if (new_part >= 0)
+        {
+          add_vid_to_send(&tq, q, vert_index);
+          add_vid_to_queue(&tq, q, vert_index);
+
+#pragma omp atomic
+          ++changes[new_part];
         }
       }
 
-      if (new_part >= 0)
-      {
-        add_vid_to_send(&tq, q, vert_index);
-        add_vid_to_queue(&tq, q, vert_index);
+      empty_send(&tq, q);
+      empty_queue(&tq, q);
+#pragma omp barrier
 
-    #pragma omp atomic
-        ++changes[new_part];
+      for (int32_t i = 0; i < nprocs; ++i)
+        tc.sendcounts_thread[i] = 0;
+
+#pragma omp for schedule(guided) nowait
+      for (uint64_t i = 0; i < q->send_size; ++i)
+      {
+        uint64_t vert_index = q->queue_send[i];
+        update_sendcounts_thread(g, &tc, vert_index);
       }
-    }  
+
+      for (int32_t i = 0; i < nprocs; ++i)
+      {
+#pragma omp atomic
+        comm->sendcounts_temp[i] += tc.sendcounts_thread[i];
+
+        tc.sendcounts_thread[i] = 0;
+      }
+#pragma omp barrier
+
+#pragma omp single
+      {
+        init_sendbuf_vid_data(comm);
+      }
+
+#pragma omp for schedule(guided) nowait
+      for (uint64_t i = 0; i < q->send_size; ++i)
+      {
+        uint64_t vert_index = q->queue_send[i];
+        update_vid_data_queues(g, &tc, comm,
+                               vert_index, pulp->local_parts[vert_index]);
+      }
+
+      empty_vid_data(&tc, comm);
+#pragma omp barrier
+
+#pragma omp single
+      {
+        temp_send_size = q->send_size;
+        exchange_vert_data(g, comm, q);
+      } // end single
+
+#pragma omp for
+      for (uint64_t i = 0; i < comm->total_recv; ++i)
+      {
+        uint64_t index = get_value(g->map, comm->recvbuf_vert[i]);
+        pulp->local_parts[index] = comm->recvbuf_data[i];
+      }
+
+#pragma omp single
+      {
+        clear_recvbuf_vid_data(comm);
+
+        MPI_Allreduce(MPI_IN_PLACE, changes, pulp->num_parts,
+                      MPI_INT64_T, MPI_SUM, MPI_COMM_WORLD);
+        for (int32_t p = 0; p < pulp->num_parts; ++p)
+        {
+          counts[p] += changes[p];
+          changes[p] = 0;
+        }
+
+        if (debug)
+          printf("Task %d send_size %lu global_size %lu\n",
+                 procid, temp_send_size, comm->global_queue_size);
+      }
+
+    } // end while
+
+    xs1024star_t xs;
+    xs1024star_seed((uint64_t)seed + omp_get_thread_num(), &xs);
+
+#pragma omp for reduction(+ : not_initialized)
+    for (uint64_t i = 0; i < g->n_local; ++i)
+    {
+      if (pulp->local_parts[i] < 0)
+      {
+        pulp->local_parts[i] =
+            (int32_t)(xs1024star_next(&xs) % (uint64_t)pulp->num_parts);
+        add_vid_to_send(&tq, q, i);
+        add_vid_to_queue(&tq, q, i);
+        ++not_initialized;
+      }
+    }
 
     empty_send(&tq, q);
     empty_queue(&tq, q);
@@ -599,9 +687,9 @@ void pulp_init_bfs_max(
 #pragma omp barrier
 
 #pragma omp single
-{
-    init_sendbuf_vid_data(comm);
-}
+    {
+      init_sendbuf_vid_data(comm);
+    }
 
 #pragma omp for schedule(guided) nowait
     for (uint64_t i = 0; i < q->send_size; ++i)
@@ -615,11 +703,9 @@ void pulp_init_bfs_max(
 #pragma omp barrier
 
 #pragma omp single
-{
-    temp_send_size = q->send_size;
-    exchange_vert_data(g, comm, q);
-} // end single
-
+    {
+      exchange_vert_data(g, comm, q);
+    } // end single
 
 #pragma omp for
     for (uint64_t i = 0; i < comm->total_recv; ++i)
@@ -629,550 +715,618 @@ void pulp_init_bfs_max(
     }
 
 #pragma omp single
-{   
-    clear_recvbuf_vid_data(comm);
-
-    MPI_Allreduce(MPI_IN_PLACE, changes, pulp->num_parts, 
-      MPI_INT64_T, MPI_SUM, MPI_COMM_WORLD);
-    for (int32_t p = 0; p < pulp->num_parts; ++p)
     {
-      counts[p] += changes[p];
-      changes[p] = 0;
+      clear_recvbuf_vid_data(comm);
     }
-   
-    if (debug) printf("Task %d send_size %lu global_size %lu\n", 
-      procid, temp_send_size, comm->global_queue_size);
+
+    clear_thread_queue(&tq);
+    clear_thread_comm(&tc);
+  } // end parallel
+
+  if (debug)
+    printf("Task %d pulp_init_bfs() success, not initialized %lu\n", procid, not_initialized);
+
+  // part_eval(g, pulp);
+  // update_pulp_data(g, pulp);
 }
-
-  } // end while
-  
-  xs1024star_t xs;
-  xs1024star_seed((uint64_t)seed + omp_get_thread_num(), &xs);
-
-#pragma omp for reduction(+:not_initialized)
-  for (uint64_t i = 0; i < g->n_local; ++i)
-  {
-    if (pulp->local_parts[i] < 0)
-    {
-      pulp->local_parts[i] = 
-        (int32_t)(xs1024star_next(&xs) % (uint64_t)pulp->num_parts);
-      add_vid_to_send(&tq, q, i);
-      add_vid_to_queue(&tq, q, i);
-      ++not_initialized;
-    }
-  }
-
-  empty_send(&tq, q);
-  empty_queue(&tq, q);
-#pragma omp barrier
-
-  for (int32_t i = 0; i < nprocs; ++i)
-      tc.sendcounts_thread[i] = 0;
-
-#pragma omp for schedule(guided) nowait
-  for (uint64_t i = 0; i < q->send_size; ++i)
-  {
-    uint64_t vert_index = q->queue_send[i];
-    update_sendcounts_thread(g, &tc, vert_index);
-  }
-
-  for (int32_t i = 0; i < nprocs; ++i)
-  {
-#pragma omp atomic
-    comm->sendcounts_temp[i] += tc.sendcounts_thread[i];
-
-    tc.sendcounts_thread[i] = 0;
-  }
-#pragma omp barrier
-
-#pragma omp single
-{
-  init_sendbuf_vid_data(comm);    
-}
-
-#pragma omp for schedule(guided) nowait
-  for (uint64_t i = 0; i < q->send_size; ++i)
-  {
-    uint64_t vert_index = q->queue_send[i];
-    update_vid_data_queues(g, &tc, comm,
-                           vert_index, pulp->local_parts[vert_index]);
-  }
-
-  empty_vid_data(&tc, comm);
-#pragma omp barrier
-
-#pragma omp single
-{
-  exchange_vert_data(g, comm, q);
-} // end single
-
-#pragma omp for
-  for (uint64_t i = 0; i < comm->total_recv; ++i)
-  {
-    uint64_t index = get_value(g->map, comm->recvbuf_vert[i]);
-    pulp->local_parts[index] = comm->recvbuf_data[i];
-  }
-
-#pragma omp single
-{
-  clear_recvbuf_vid_data(comm);
-}
-
-  clear_thread_queue(&tq);
-  clear_thread_comm(&tc);
-} // end parallel 
-
-  if (debug) printf("Task %d pulp_init_bfs() success, not initialized %lu\n", procid, not_initialized);
-
-  //part_eval(g, pulp);
-  //update_pulp_data(g, pulp);
-
-}
-
 
 #define MIN_SIZE 0.25
 
-void pulp_init_label_prop_weighted(dist_graph_t* g, 
-  mpi_data_t* comm, queue_data_t* q, pulp_data_t* pulp,
-  uint64_t lp_num_iter) 
+void pulp_init_label_prop_weighted(dist_graph_t *g,
+                                   mpi_data_t *comm, queue_data_t *q, pulp_data_t *pulp,
+                                   uint64_t lp_num_iter)
 {
-  if (debug) { printf("Task %d pulp_init_label_prop_weighted() start\n", procid); }
+  if (debug)
+  {
+    printf("Task %d pulp_init_label_prop_weighted() start, seeds=train nids\n", procid);
+  }
 
-  bool has_vwgts = (g->vert_weights != NULL);
+  // bool has_vwgts = (g->vert_weights != NULL);
   bool has_ewgts = (g->edge_weights != NULL);
 
-  q->send_size = 0;
-  for (int32_t i = 0; i < nprocs; ++i)
-    comm->sendcounts_temp[i] = 0;
-
-  double min_size = pulp->avg_sizes[0] * MIN_SIZE;
-  double multiplier = (double) nprocs;
-
-#pragma omp parallel 
-{
-  thread_queue_t tq;
-  thread_comm_t tc;
-  thread_pulp_t tp;
-  init_thread_queue(&tq);
-  init_thread_comm(&tc);
-  init_thread_pulp(&tp, pulp, g->num_vert_weights);
-
-  xs1024star_t xs;
-  xs1024star_seed((uint64_t)(seed + omp_get_thread_num()), &xs);
-
-#pragma omp for
-  for (uint64_t i = 0; i < g->n_local; ++i)
-    pulp->local_parts[i] = 
-      (int32_t)(xs1024star_next(&xs) % (uint64_t)pulp->num_parts);
-
-#pragma omp for
-  for (uint64_t i = g->n_local; i < g->n_total; ++i)
-    pulp->local_parts[i] = -1;
-
-#pragma omp for schedule(guided) nowait
-  for (uint64_t i = 0; i < g->n_local; ++i)
-    update_sendcounts_thread(g, &tc, i);
-
-  for (int32_t i = 0; i < nprocs; ++i)
-  {
-#pragma omp atomic
-    comm->sendcounts_temp[i] += tc.sendcounts_thread[i];
-
-    tc.sendcounts_thread[i] = 0;
-  }
-
-#pragma omp barrier
-
-#pragma omp single
-{
-  init_sendbuf_vid_data(comm);    
-}
-
-#pragma omp for schedule(guided) nowait
-  for (uint64_t i = 0; i < g->n_local; ++i)
-    update_vid_data_queues(g, &tc, comm, i, pulp->local_parts[i]);
-
-  empty_vid_data(&tc, comm);
-#pragma omp barrier
-
-#pragma omp single
-{
-  exchange_vert_data(g, comm, q);
-} // end single
-
-#pragma omp for
-  for (uint64_t i = 0; i < comm->total_recv; ++i)
-  {
-    uint64_t index = get_value(g->map, comm->recvbuf_vert[i]);
-    pulp->local_parts[index] = comm->recvbuf_data[i];
-  }
-
-#pragma omp single
-{
-  clear_recvbuf_vid_data(comm);
-  update_pulp_data_weighted(g, pulp);
-}
-
-for (uint64_t cur_iter = 0; cur_iter < lp_num_iter; ++cur_iter)
-{
-
-#pragma omp for schedule(guided)  nowait
-  for (uint64_t vert_index = 0; vert_index < g->n_local; ++vert_index)
-  {
-    int32_t part = pulp->local_parts[vert_index];
-    int32_t vert_weight = 1;
-    if (has_vwgts) vert_weight = g->vert_weights[vert_index];
-
-    for (int32_t p = 0; p < pulp->num_parts; ++p)
-      tp.part_counts[p] = 0.0;
-
-    uint64_t out_degree = out_degree(g, vert_index);
-    uint64_t* outs = out_vertices(g, vert_index);
-    int32_t* weights = out_weights(g, vert_index);
-    for (uint64_t j = 0; j < out_degree; ++j)
-    {
-      uint64_t out_index = outs[j];
-      int32_t part_out = pulp->local_parts[out_index];
-      double weight_out = 1.0;
-      if (has_ewgts) weight_out = (double)weights[j];
-      tp.part_counts[part_out] += weight_out;
-    }
-
-    int32_t max_part = part;
-    double max_val = -1.0;
-    uint64_t num_max = 0;
-    for (int32_t p = 0; p < pulp->num_parts; ++p)
-    {
-      if (tp.part_counts[p] == max_val)
-      {
-        tp.part_counts[num_max++] = (double)p;
-      }
-      else if (tp.part_counts[p] > max_val)
-      {
-        max_val = tp.part_counts[p];
-        max_part = p;
-        num_max = 0;
-        tp.part_counts[num_max++] = (double)p;
-      }
-    }      
-
-    if (num_max > 1)
-      max_part = 
-        (int32_t)tp.part_counts[(xs1024star_next(&xs) % num_max)];
-
-    if (max_part != part)
-    {
-      int64_t new_size = (int64_t)pulp->avg_sizes[0];
-
-      pulp->part_size_changes[0][part] - (int64_t)vert_weight > 0 ?
-        new_size = pulp->part_sizes[0][part] + pulp->part_size_changes[0][part] - vert_weight :
-        new_size = (int64_t)((double)pulp->part_sizes[0][part] + multiplier * pulp->part_size_changes[0][part] - vert_weight);
-
-      if (new_size > (int64_t)min_size)
-      {
-    #pragma omp atomic
-        pulp->part_size_changes[0][part] -= vert_weight;
-    #pragma omp atomic
-        pulp->part_size_changes[0][max_part] += vert_weight;
-
-        pulp->local_parts[vert_index] = max_part;
-        add_vid_to_send(&tq, q, vert_index);
-      }
-    }
-  }  
-
-  empty_send(&tq, q);
-#pragma omp barrier
-
-  for (int32_t i = 0; i < nprocs; ++i)
-    tc.sendcounts_thread[i] = 0;
-
-#pragma omp for schedule(guided) nowait
-  for (uint64_t i = 0; i < q->send_size; ++i)
-  {
-    uint64_t vert_index = q->queue_send[i];
-    update_sendcounts_thread(g, &tc, vert_index);
-  }
-
-  for (int32_t i = 0; i < nprocs; ++i)
-  {
-#pragma omp atomic
-    comm->sendcounts_temp[i] += tc.sendcounts_thread[i];
-
-    tc.sendcounts_thread[i] = 0;
-  }
-#pragma omp barrier
-
-#pragma omp single
-{
-  init_sendbuf_vid_data(comm);    
-}
-
-#pragma omp for schedule(guided) nowait
-  for (uint64_t i = 0; i < q->send_size; ++i)
-  {
-    uint64_t vert_index = q->queue_send[i];
-    update_vid_data_queues(g, &tc, comm,
-                           vert_index, pulp->local_parts[vert_index]);
-  }
-
-  empty_vid_data(&tc, comm);
-#pragma omp barrier
-
-#pragma omp single
-{
-  exchange_vert_data(g, comm, q);
-} // end single
-
-
-#pragma omp for
-  for (uint64_t i = 0; i < comm->total_recv; ++i)
-  {
-    uint64_t index = get_value(g->map, comm->recvbuf_vert[i]);
-    pulp->local_parts[index] = comm->recvbuf_data[i];
-  }
-
-#pragma omp single
-{
-  clear_recvbuf_vid_data(comm);
-
-  MPI_Allreduce(MPI_IN_PLACE, pulp->part_size_changes[0], pulp->num_parts, 
-  MPI_INT64_T, MPI_SUM, MPI_COMM_WORLD);
-  for (int32_t p = 0; p < pulp->num_parts; ++p)
-  {
-    pulp->part_sizes[0][p] += pulp->part_size_changes[0][p];
-    pulp->part_size_changes[0][p] = 0;
-  }
-}
-
-
-} // end for iter loop
-
-  clear_thread_queue(&tq);
-  clear_thread_comm(&tc);
-} // end parallel
-
-  //update_pulp_data_weighted(g, pulp);
-
-  if (debug) { printf("Task %d pulp_init_label_prop_weighted() success\n", procid); }
-}
-
-
-
-
-void pulp_init_label_prop(dist_graph_t* g, 
-  mpi_data_t* comm, queue_data_t* q, pulp_data_t* pulp,
-  uint64_t lp_num_iter) 
-{
-  if (debug) { printf("Task %d pulp_init_label_prop() start\n", procid); }
+  uint64_t not_initialized = 0;
 
   q->send_size = 0;
   for (int32_t i = 0; i < nprocs; ++i)
     comm->sendcounts_temp[i] = 0;
 
   double min_size = pulp->avg_sizes[0] * MIN_SIZE;
-  double multiplier = (double) nprocs;
-
-#pragma omp parallel 
-{
-  thread_queue_t tq;
-  thread_comm_t tc;
-  thread_pulp_t tp;
-  init_thread_queue(&tq);
-  init_thread_comm(&tc);
-  init_thread_pulp(&tp, pulp, g->num_vert_weights);
+  double multiplier = (double)nprocs;
 
   xs1024star_t xs;
   xs1024star_seed((uint64_t)(seed + omp_get_thread_num()), &xs);
 
-#pragma omp for
-  for (uint64_t i = 0; i < g->n_local; ++i)
-    pulp->local_parts[i] = 
-      (int32_t)(xs1024star_next(&xs) % (uint64_t)pulp->num_parts);
-
-#pragma omp for
-  for (uint64_t i = g->n_local; i < g->n_total; ++i)
-    pulp->local_parts[i] = -1;
-
-#pragma omp for schedule(guided) nowait
-  for (uint64_t i = 0; i < g->n_local; ++i)
-    update_sendcounts_thread(g, &tc, i);
-
-  for (int32_t i = 0; i < nprocs; ++i)
+  // modified: only assign train nids.
+  for (int32_t i = 0; i < pulp->num_parts; ++i)
   {
+    pulp->part_sizes[0][i] = 0;
+  }
+
+#pragma omp parallel
+  {
+#pragma omp for
+    for (uint64_t i = 0; i < g->n_local; ++i)
+    {
+      if (g->vert_weights[i * g->num_vert_weights + train_wid] > 0)
+      {
+        int32_t part =
+            (int32_t)(xs1024star_next(&xs) % (uint64_t)pulp->num_parts);
+        pulp->local_parts[i] = part;
 #pragma omp atomic
-    comm->sendcounts_temp[i] += tc.sendcounts_thread[i];
-
-    tc.sendcounts_thread[i] = 0;
-  }
-
-#pragma omp barrier
-
-#pragma omp single
-{
-  init_sendbuf_vid_data(comm);    
-}
-
-#pragma omp for schedule(guided) nowait
-  for (uint64_t i = 0; i < g->n_local; ++i)
-    update_vid_data_queues(g, &tc, comm, i, pulp->local_parts[i]);
-
-  empty_vid_data(&tc, comm);
-#pragma omp barrier
-
-#pragma omp single
-{
-  exchange_vert_data(g, comm, q);
-} // end single
-
-#pragma omp for
-  for (uint64_t i = 0; i < comm->total_recv; ++i)
-  {
-    uint64_t index = get_value(g->map, comm->recvbuf_vert[i]);
-    pulp->local_parts[index] = comm->recvbuf_data[i];
-  }
-
-#pragma omp single
-{
-  clear_recvbuf_vid_data(comm);
-  update_pulp_data_weighted(g, pulp);
-}
-
-for (uint64_t cur_iter = 0; cur_iter < lp_num_iter; ++cur_iter)
-{
-
-#pragma omp for schedule(guided) nowait
-  for (uint64_t vert_index = 0; vert_index < g->n_local; ++vert_index)
-  {
-    int32_t part = pulp->local_parts[vert_index];
-
-    for (int32_t p = 0; p < pulp->num_parts; ++p)
-      tp.part_counts[p] = 0.0;
-
-    uint64_t out_degree = out_degree(g, vert_index);
-    uint64_t* outs = out_vertices(g, vert_index);
-    for (uint64_t j = 0; j < out_degree; ++j)
-    {
-      uint64_t out_index = outs[j];
-      int32_t part_out = pulp->local_parts[out_index];
-      tp.part_counts[part_out] += 1.0;
-    }
-
-    int32_t max_part = part;
-    double max_val = -1.0;
-    uint64_t num_max = 0;
-    for (int32_t p = 0; p < pulp->num_parts; ++p)
-    {
-      if (tp.part_counts[p] == max_val)
-      {
-        tp.part_counts[num_max++] = (double)p;
+        pulp->part_sizes[0][part] += 1;
       }
-      else if (tp.part_counts[p] > max_val)
+      else
       {
-        max_val = tp.part_counts[p];
-        max_part = p;
-        num_max = 0;
-        tp.part_counts[num_max++] = (double)p;
-      }
-    }      
-
-    if (num_max > 1)
-      max_part = 
-        (int32_t)tp.part_counts[(xs1024star_next(&xs) % num_max)];
-
-    if (max_part != part)
-    {
-      int64_t new_size = (int64_t)pulp->avg_sizes[0];
-
-      pulp->part_size_changes[0][part] - 1 > 0 ?
-        new_size = pulp->part_sizes[0][part] + pulp->part_size_changes[0][part] - 1 :
-        new_size = (int64_t)((double)pulp->part_sizes[0][part] + multiplier * pulp->part_size_changes[0][part] - 1);
-
-      if (new_size > (int64_t)min_size)
-      {
-    #pragma omp atomic
-        --pulp->part_size_changes[0][part];
-    #pragma omp atomic
-        ++pulp->part_size_changes[0][max_part];
-
-        pulp->local_parts[vert_index] = max_part;
-        add_vid_to_send(&tq, q, vert_index);
+        pulp->local_parts[i] = -1;
       }
     }
-  }  
-
-  empty_send(&tq, q);
-#pragma omp barrier
-
-  for (int32_t i = 0; i < nprocs; ++i)
-    tc.sendcounts_thread[i] = 0;
-
-#pragma omp for schedule(guided) nowait
-  for (uint64_t i = 0; i < q->send_size; ++i)
-  {
-    uint64_t vert_index = q->queue_send[i];
-    update_sendcounts_thread(g, &tc, vert_index);
   }
-
-  for (int32_t i = 0; i < nprocs; ++i)
-  {
-#pragma omp atomic
-    comm->sendcounts_temp[i] += tc.sendcounts_thread[i];
-
-    tc.sendcounts_thread[i] = 0;
-  }
-#pragma omp barrier
-
-#pragma omp single
-{
-  init_sendbuf_vid_data(comm);    
-}
-
-#pragma omp for schedule(guided) nowait
-  for (uint64_t i = 0; i < q->send_size; ++i)
-  {
-    uint64_t vert_index = q->queue_send[i];
-    update_vid_data_queues(g, &tc, comm,
-                           vert_index, pulp->local_parts[vert_index]);
-  }
-
-  empty_vid_data(&tc, comm);
-#pragma omp barrier
-
-#pragma omp single
-{
-  exchange_vert_data(g, comm, q);
-} // end single
-
-
-#pragma omp for
-  for (uint64_t i = 0; i < comm->total_recv; ++i)
-  {
-    uint64_t index = get_value(g->map, comm->recvbuf_vert[i]);
-    pulp->local_parts[index] = comm->recvbuf_data[i];
-  }
-
-#pragma omp single
-{
-  clear_recvbuf_vid_data(comm);
-
-  MPI_Allreduce(MPI_IN_PLACE, pulp->part_size_changes[0], pulp->num_parts, 
-  MPI_INT64_T, MPI_SUM, MPI_COMM_WORLD);
+  int64_t train_num_max, train_num_min;
+  int64_t *train_sizes = (int64_t *)malloc(sizeof(int64_t) * pulp->num_parts);
   for (int32_t p = 0; p < pulp->num_parts; ++p)
   {
-    pulp->part_sizes[0][p] += pulp->part_size_changes[0][p];
-    pulp->part_size_changes[0][p] = 0;
+    train_sizes[p] = pulp->part_sizes[0][p];
+  }
+
+  if (debug)
+  {
+    for (int32_t i = 0; i < pulp->num_parts; ++i)
+    {
+
+      printf("Task %d initialize: part %d has %ld verts\n", procid, i, pulp->part_sizes[0][i]);
+    }
+  }
+
+#pragma omp parallel
+  {
+    thread_queue_t tq;
+    thread_comm_t tc;
+    thread_pulp_t tp;
+    init_thread_queue(&tq);
+    init_thread_comm(&tc);
+    init_thread_pulp(&tp, pulp, g->num_vert_weights);
+
+#pragma omp for schedule(guided) nowait
+    for (uint64_t i = 0; i < g->n_local; ++i)
+      update_sendcounts_thread(g, &tc, i);
+
+    for (int32_t i = 0; i < nprocs; ++i)
+    {
+#pragma omp atomic
+      comm->sendcounts_temp[i] += tc.sendcounts_thread[i];
+
+      tc.sendcounts_thread[i] = 0;
+    }
+
+#pragma omp barrier
+
+#pragma omp single
+    {
+      init_sendbuf_vid_data(comm);
+    }
+
+#pragma omp for schedule(guided) nowait
+    for (uint64_t i = 0; i < g->n_local; ++i)
+      update_vid_data_queues(g, &tc, comm, i, pulp->local_parts[i]);
+
+    empty_vid_data(&tc, comm);
+#pragma omp barrier
+
+#pragma omp single
+    {
+      exchange_vert_data(g, comm, q);
+    } // end single
+
+#pragma omp for
+    for (uint64_t i = 0; i < comm->total_recv; ++i)
+    {
+      uint64_t index = get_value(g->map, comm->recvbuf_vert[i]);
+      pulp->local_parts[index] = comm->recvbuf_data[i];
+    }
+
+#pragma omp single
+    {
+      clear_recvbuf_vid_data(comm);
+      update_pulp_data_weighted(g, pulp);
+    }
+
+    for (uint64_t cur_iter = 0; cur_iter < lp_num_iter; ++cur_iter)
+    {
+
+#pragma omp for schedule(guided) nowait
+      for (uint64_t vert_index = 0; vert_index < g->n_local; ++vert_index)
+      {
+        int32_t part = pulp->local_parts[vert_index];
+        int32_t vert_weight = 1;
+        // if (has_vwgts)
+        //   vert_weight = g->vert_weights[vert_index];
+
+        for (int32_t p = 0; p < pulp->num_parts; ++p)
+          tp.part_counts[p] = 0.0;
+
+        uint64_t out_degree = out_degree(g, vert_index);
+        uint64_t *outs = out_vertices(g, vert_index);
+        int32_t *weights = out_weights(g, vert_index);
+        for (uint64_t j = 0; j < out_degree; ++j)
+        {
+          uint64_t out_index = outs[j];
+          int32_t part_out = pulp->local_parts[out_index];
+          if (part_out >= 0)
+          {
+            double weight_out = 1.0;
+            if (has_ewgts)
+              weight_out = (double)weights[j];
+            tp.part_counts[part_out] += weight_out;
+          }
+        }
+
+        int32_t max_part = part;
+        double max_val = -1.0;
+        uint64_t num_max = 0;
+        for (int32_t p = 0; p < pulp->num_parts; ++p)
+        {
+          if (tp.part_counts[p] == max_val)
+          {
+            tp.part_counts[num_max++] = (double)p;
+          }
+          else if (tp.part_counts[p] > max_val)
+          {
+            max_val = tp.part_counts[p];
+            max_part = p;
+            num_max = 0;
+            tp.part_counts[num_max++] = (double)p;
+          }
+        }
+
+        if (num_max > 1)
+          max_part =
+              (int32_t)tp.part_counts[(xs1024star_next(&xs) % num_max)];
+
+        if (max_part != part)
+        {
+          int64_t new_size = (int64_t)pulp->avg_sizes[0];
+
+          if (part >= 0)
+          {
+            if (pulp->part_size_changes[0][part] - (int64_t)vert_weight > 0)
+            {
+              new_size = pulp->part_sizes[0][part] + pulp->part_size_changes[0][part] - vert_weight;
+            }
+            else
+            {
+              new_size = (int64_t)((double)pulp->part_sizes[0][part] + multiplier * pulp->part_size_changes[0][part] - vert_weight);
+            }
+          }
+
+          if (part == -1 || new_size > (int64_t)min_size)
+          {
+            bool send = true;
+            if (g->vert_weights[vert_index * g->num_vert_weights + train_wid] > 0)
+            {
+#pragma omp critical
+              {
+                train_sizes[max_part] += 1;
+                train_sizes[part] -= 1;
+                train_num_max = 0;
+                train_num_min = g->n_total;
+                for (int32_t p = 0; p < pulp->num_parts; ++p)
+                {
+                  if (train_sizes[p] > train_num_max)
+                  {
+                    train_num_max = train_sizes[p];
+                    // train_max_pid = p;
+                  }
+                  if (train_sizes[p] < train_num_min)
+                  {
+                    train_num_min = train_sizes[p];
+                    // train_min_pid = p;
+                  }
+                }
+                if (train_num_max - train_num_min >= batch_size)
+                {
+                  send = false;
+                  train_sizes[max_part] -= 1;
+                  train_sizes[part] += 1;
+                }
+                // printf("minpid%d minnum%ld maxpid%d maxnum%ld srcpid%d dstpid%d send%d\n", train_min_pid, train_num_min, train_max_pid, train_num_max, part, max_part, send);
+              }
+            }
+
+            if (send)
+            {
+#pragma omp atomic
+              pulp->part_size_changes[0][part] -= vert_weight;
+#pragma omp atomic
+              pulp->part_size_changes[0][max_part] += vert_weight;
+
+              pulp->local_parts[vert_index] = max_part;
+              add_vid_to_send(&tq, q, vert_index);
+            }
+          }
+        }
+      }
+
+      empty_send(&tq, q);
+#pragma omp barrier
+
+      for (int32_t i = 0; i < nprocs; ++i)
+        tc.sendcounts_thread[i] = 0;
+
+#pragma omp for schedule(guided) nowait
+      for (uint64_t i = 0; i < q->send_size; ++i)
+      {
+        uint64_t vert_index = q->queue_send[i];
+        update_sendcounts_thread(g, &tc, vert_index);
+      }
+
+      for (int32_t i = 0; i < nprocs; ++i)
+      {
+#pragma omp atomic
+        comm->sendcounts_temp[i] += tc.sendcounts_thread[i];
+
+        tc.sendcounts_thread[i] = 0;
+      }
+#pragma omp barrier
+
+#pragma omp single
+      {
+        init_sendbuf_vid_data(comm);
+      }
+
+#pragma omp for schedule(guided) nowait
+      for (uint64_t i = 0; i < q->send_size; ++i)
+      {
+        uint64_t vert_index = q->queue_send[i];
+        update_vid_data_queues(g, &tc, comm,
+                               vert_index, pulp->local_parts[vert_index]);
+      }
+
+      empty_vid_data(&tc, comm);
+#pragma omp barrier
+
+#pragma omp single
+      {
+        exchange_vert_data(g, comm, q);
+      } // end single
+
+#pragma omp for
+      for (uint64_t i = 0; i < comm->total_recv; ++i)
+      {
+        uint64_t index = get_value(g->map, comm->recvbuf_vert[i]);
+        pulp->local_parts[index] = comm->recvbuf_data[i];
+      }
+
+#pragma omp single
+      {
+        clear_recvbuf_vid_data(comm);
+
+        MPI_Allreduce(MPI_IN_PLACE, pulp->part_size_changes[0], pulp->num_parts,
+                      MPI_INT64_T, MPI_SUM, MPI_COMM_WORLD);
+        for (int32_t p = 0; p < pulp->num_parts; ++p)
+        {
+          pulp->part_sizes[0][p] += pulp->part_size_changes[0][p];
+          pulp->part_size_changes[0][p] = 0;
+        }
+      }
+
+    } // end for iter loop
+
+#pragma omp for reduction(+ : not_initialized)
+    for (uint64_t i = 0; i < g->n_local; ++i)
+    {
+      if (pulp->local_parts[i] < 0)
+      {
+        pulp->local_parts[i] =
+            (int32_t)(xs1024star_next(&xs) % (uint64_t)pulp->num_parts);
+        add_vid_to_send(&tq, q, i);
+        add_vid_to_queue(&tq, q, i);
+        ++not_initialized;
+      }
+    }
+
+    empty_send(&tq, q);
+    empty_queue(&tq, q);
+#pragma omp barrier
+
+    for (int32_t i = 0; i < nprocs; ++i)
+      tc.sendcounts_thread[i] = 0;
+
+#pragma omp for schedule(guided) nowait
+    for (uint64_t i = 0; i < q->send_size; ++i)
+    {
+      uint64_t vert_index = q->queue_send[i];
+      update_sendcounts_thread(g, &tc, vert_index);
+    }
+
+    for (int32_t i = 0; i < nprocs; ++i)
+    {
+#pragma omp atomic
+      comm->sendcounts_temp[i] += tc.sendcounts_thread[i];
+
+      tc.sendcounts_thread[i] = 0;
+    }
+#pragma omp barrier
+
+#pragma omp single
+    {
+      init_sendbuf_vid_data(comm);
+    }
+
+#pragma omp for schedule(guided) nowait
+    for (uint64_t i = 0; i < q->send_size; ++i)
+    {
+      uint64_t vert_index = q->queue_send[i];
+      update_vid_data_queues(g, &tc, comm,
+                             vert_index, pulp->local_parts[vert_index]);
+    }
+
+    empty_vid_data(&tc, comm);
+#pragma omp barrier
+
+#pragma omp single
+    {
+      exchange_vert_data(g, comm, q);
+    } // end single
+
+#pragma omp for
+    for (uint64_t i = 0; i < comm->total_recv; ++i)
+    {
+      uint64_t index = get_value(g->map, comm->recvbuf_vert[i]);
+      pulp->local_parts[index] = comm->recvbuf_data[i];
+    }
+
+#pragma omp single
+    {
+      clear_recvbuf_vid_data(comm);
+    }
+
+    clear_thread_queue(&tq);
+    clear_thread_comm(&tc);
+  } // end parallel
+
+  // update_pulp_data_weighted(g, pulp);
+
+  if (debug)
+  {
+    printf("Task %d pulp_init_label_prop_weighted() success, not initialized %lu\n", procid, not_initialized);
   }
 }
 
+void pulp_init_label_prop(dist_graph_t *g,
+                          mpi_data_t *comm, queue_data_t *q, pulp_data_t *pulp,
+                          uint64_t lp_num_iter)
+{
+  if (debug)
+  {
+    printf("Task %d pulp_init_label_prop() start\n", procid);
+  }
 
-} // end for iter loop
+  q->send_size = 0;
+  for (int32_t i = 0; i < nprocs; ++i)
+    comm->sendcounts_temp[i] = 0;
 
-  clear_thread_queue(&tq);
-  clear_thread_comm(&tc);
-} // end parallel
+  double min_size = pulp->avg_sizes[0] * MIN_SIZE;
+  double multiplier = (double)nprocs;
 
-  //update_pulp_data(g, pulp);
+#pragma omp parallel
+  {
+    thread_queue_t tq;
+    thread_comm_t tc;
+    thread_pulp_t tp;
+    init_thread_queue(&tq);
+    init_thread_comm(&tc);
+    init_thread_pulp(&tp, pulp, g->num_vert_weights);
 
-  if (debug) { printf("Task %d pulp_init_label_prop() success\n", procid); }
+    xs1024star_t xs;
+    xs1024star_seed((uint64_t)(seed + omp_get_thread_num()), &xs);
+
+#pragma omp for
+    for (uint64_t i = 0; i < g->n_local; ++i)
+      pulp->local_parts[i] =
+          (int32_t)(xs1024star_next(&xs) % (uint64_t)pulp->num_parts);
+
+#pragma omp for
+    for (uint64_t i = g->n_local; i < g->n_total; ++i)
+      pulp->local_parts[i] = -1;
+
+#pragma omp for schedule(guided) nowait
+    for (uint64_t i = 0; i < g->n_local; ++i)
+      update_sendcounts_thread(g, &tc, i);
+
+    for (int32_t i = 0; i < nprocs; ++i)
+    {
+#pragma omp atomic
+      comm->sendcounts_temp[i] += tc.sendcounts_thread[i];
+
+      tc.sendcounts_thread[i] = 0;
+    }
+
+#pragma omp barrier
+
+#pragma omp single
+    {
+      init_sendbuf_vid_data(comm);
+    }
+
+#pragma omp for schedule(guided) nowait
+    for (uint64_t i = 0; i < g->n_local; ++i)
+      update_vid_data_queues(g, &tc, comm, i, pulp->local_parts[i]);
+
+    empty_vid_data(&tc, comm);
+#pragma omp barrier
+
+#pragma omp single
+    {
+      exchange_vert_data(g, comm, q);
+    } // end single
+
+#pragma omp for
+    for (uint64_t i = 0; i < comm->total_recv; ++i)
+    {
+      uint64_t index = get_value(g->map, comm->recvbuf_vert[i]);
+      pulp->local_parts[index] = comm->recvbuf_data[i];
+    }
+
+#pragma omp single
+    {
+      clear_recvbuf_vid_data(comm);
+      update_pulp_data_weighted(g, pulp);
+    }
+
+    for (uint64_t cur_iter = 0; cur_iter < lp_num_iter; ++cur_iter)
+    {
+
+#pragma omp for schedule(guided) nowait
+      for (uint64_t vert_index = 0; vert_index < g->n_local; ++vert_index)
+      {
+        int32_t part = pulp->local_parts[vert_index];
+
+        for (int32_t p = 0; p < pulp->num_parts; ++p)
+          tp.part_counts[p] = 0.0;
+
+        uint64_t out_degree = out_degree(g, vert_index);
+        uint64_t *outs = out_vertices(g, vert_index);
+        for (uint64_t j = 0; j < out_degree; ++j)
+        {
+          uint64_t out_index = outs[j];
+          int32_t part_out = pulp->local_parts[out_index];
+          tp.part_counts[part_out] += 1.0;
+        }
+
+        int32_t max_part = part;
+        double max_val = -1.0;
+        uint64_t num_max = 0;
+        for (int32_t p = 0; p < pulp->num_parts; ++p)
+        {
+          if (tp.part_counts[p] == max_val)
+          {
+            tp.part_counts[num_max++] = (double)p;
+          }
+          else if (tp.part_counts[p] > max_val)
+          {
+            max_val = tp.part_counts[p];
+            max_part = p;
+            num_max = 0;
+            tp.part_counts[num_max++] = (double)p;
+          }
+        }
+
+        if (num_max > 1)
+          max_part =
+              (int32_t)tp.part_counts[(xs1024star_next(&xs) % num_max)];
+
+        if (max_part != part)
+        {
+          int64_t new_size = (int64_t)pulp->avg_sizes[0];
+
+          pulp->part_size_changes[0][part] - 1 > 0 ? new_size = pulp->part_sizes[0][part] + pulp->part_size_changes[0][part] - 1 : new_size = (int64_t)((double)pulp->part_sizes[0][part] + multiplier * pulp->part_size_changes[0][part] - 1);
+
+          if (new_size > (int64_t)min_size)
+          {
+#pragma omp atomic
+            --pulp->part_size_changes[0][part];
+#pragma omp atomic
+            ++pulp->part_size_changes[0][max_part];
+
+            pulp->local_parts[vert_index] = max_part;
+            add_vid_to_send(&tq, q, vert_index);
+          }
+        }
+      }
+
+      empty_send(&tq, q);
+#pragma omp barrier
+
+      for (int32_t i = 0; i < nprocs; ++i)
+        tc.sendcounts_thread[i] = 0;
+
+#pragma omp for schedule(guided) nowait
+      for (uint64_t i = 0; i < q->send_size; ++i)
+      {
+        uint64_t vert_index = q->queue_send[i];
+        update_sendcounts_thread(g, &tc, vert_index);
+      }
+
+      for (int32_t i = 0; i < nprocs; ++i)
+      {
+#pragma omp atomic
+        comm->sendcounts_temp[i] += tc.sendcounts_thread[i];
+
+        tc.sendcounts_thread[i] = 0;
+      }
+#pragma omp barrier
+
+#pragma omp single
+      {
+        init_sendbuf_vid_data(comm);
+      }
+
+#pragma omp for schedule(guided) nowait
+      for (uint64_t i = 0; i < q->send_size; ++i)
+      {
+        uint64_t vert_index = q->queue_send[i];
+        update_vid_data_queues(g, &tc, comm,
+                               vert_index, pulp->local_parts[vert_index]);
+      }
+
+      empty_vid_data(&tc, comm);
+#pragma omp barrier
+
+#pragma omp single
+      {
+        exchange_vert_data(g, comm, q);
+      } // end single
+
+#pragma omp for
+      for (uint64_t i = 0; i < comm->total_recv; ++i)
+      {
+        uint64_t index = get_value(g->map, comm->recvbuf_vert[i]);
+        pulp->local_parts[index] = comm->recvbuf_data[i];
+      }
+
+#pragma omp single
+      {
+        clear_recvbuf_vid_data(comm);
+
+        MPI_Allreduce(MPI_IN_PLACE, pulp->part_size_changes[0], pulp->num_parts,
+                      MPI_INT64_T, MPI_SUM, MPI_COMM_WORLD);
+        for (int32_t p = 0; p < pulp->num_parts; ++p)
+        {
+          pulp->part_sizes[0][p] += pulp->part_size_changes[0][p];
+          pulp->part_size_changes[0][p] = 0;
+        }
+      }
+
+    } // end for iter loop
+
+    clear_thread_queue(&tq);
+    clear_thread_comm(&tc);
+  } // end parallel
+
+  // update_pulp_data(g, pulp);
+
+  if (debug)
+  {
+    printf("Task %d pulp_init_label_prop() success\n", procid);
+  }
 }
