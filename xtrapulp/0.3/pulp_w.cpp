@@ -169,6 +169,17 @@ int pulp_w(
           }
         }
 
+        if (do_maxcut_balance)
+        {
+          pulp->avg_cut_size = (double)pulp->cut_size / (double)pulp->num_parts;
+          for (int32_t p = 0; p < pulp->num_parts; ++p)
+          {
+            if ((double)pulp->part_cut_sizes[p] / pulp->avg_cut_size > pulp->max_c)
+              pulp->max_c = (double)pulp->part_cut_sizes[p] / pulp->avg_cut_size;
+            tp.part_cut_weights[p] = pulp->max_c * pulp->avg_cut_size / (double)pulp->part_cut_sizes[p] - 1.0;
+          }
+        }
+
 #pragma omp for schedule(guided) reduction(+ : num_swapped_1) nowait
         for (uint64_t vert_index = 0; vert_index < g->n_local; ++vert_index)
         {
