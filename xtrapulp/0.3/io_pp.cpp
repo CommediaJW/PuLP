@@ -61,7 +61,6 @@
 
 extern int procid, nprocs;
 extern bool verbose, debug, verify;
-extern bool directed;
 
 int load_graph_edges_32(char *input_filename, graph_gen_data_t *ggi,
                         bool offset_vids)
@@ -354,7 +353,6 @@ int read_adj(char *input_filename,
   std::ifstream infile;
   std::string line;
   std::string val;
-  printf("Graph directed = %d\n", directed);
 
   float *tmp_vert_weights = NULL;
   float *tmp_edge_weights = NULL;
@@ -445,32 +443,14 @@ int read_adj(char *input_filename,
         weight = atof(val.c_str());
       }
 
-      if (directed)
+      ggi->gen_edges[2 * count] = dst;
+      ggi->gen_edges[2 * count + 1] = src;
+      if (ggi->num_edge_weights > 0 || ggi->num_vert_weights > 0)
       {
-        if (src < dst)
-        {
-          ggi->gen_edges[2 * count] = dst;
-          ggi->gen_edges[2 * count + 1] = src;
-
-          if (ggi->num_edge_weights > 0 || ggi->num_vert_weights > 0)
-          {
-            tmp_edge_weights[count] = weight;
-          }
-
-          ++count;
-        }
+        tmp_edge_weights[count] = weight;
       }
-      else
-      {
-        ggi->gen_edges[2 * count] = src;
-        ggi->gen_edges[2 * count + 1] = dst;
-        if (ggi->num_edge_weights > 0 || ggi->num_vert_weights > 0)
-        {
-          tmp_edge_weights[count] = weight;
-        }
 
-        ++count;
-      }
+      ++count;
     }
     ++cur_line;
   }

@@ -65,7 +65,6 @@ extern int seed;
 extern bool verbose, debug, verify;
 extern int64_t batch_size;
 extern int64_t train_wid;
-bool directed = false;
 
 void print_usage(char **argv)
 {
@@ -238,9 +237,6 @@ int main(int argc, char **argv)
       break;*/
     case 'p':
       gen_m_per_n = strtoul(optarg, NULL, 10);
-      break;
-    case 'd':
-      directed = true;
       break;
     case 'l':
       do_lp_init = true;
